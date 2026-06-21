@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premium Stream Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #060608;
+            --accent-color: #ff3b30;
+            --panel-bg: rgba(18, 18, 24, 0.65);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --text-color: #ffffff;
+            --text-secondary: #9a9aae;
+            
+            /* Status Colors */
+            --status-green: #30d158;
+            --status-yellow: #ffd60a;
+            --status-orange: #ff9f0a;
+            --status-red: #ff453a;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .interactive-ui {
+            transition: opacity 0.4s cubic-bezier(0.25, 1, 0.5, 1), transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        /* Outer Frame Layout Component - Optimized with TV Safe Zone Margins */
+        #stage-wrapper {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 5vh 6vw; /* 5% vertical and 6% horizontal safe zones prevent TV clipping */
+            width: 100%;
+            height: 100vh;
+            overflow-y: auto;
+            gap: 24px; /* Slightly increased gap for TV breathing room */
+        }
+
+        /* Responsive Player Container Frame - Clean Minimalist Squared Edge */
+        #player-container {
+            position: relative;
+            width: 100%;
+            max-width: 1200px; /* Enhanced maximum threshold footprint for large television matrices */
+            aspect-ratio: 16 / 9; 
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 0px; 
+            border: 1px solid var(--panel-border);
+            overflow: hidden;
+            box-shadow: none; 
+            transition: max-width 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        #player-container:fullscreen {
+            max-width: none !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            border: none !important;
+            border-radius: 0px !important;
+        }
+        #player-container:-webkit-full-screen {
+            max-width: none !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            border: none !important;
+            border-radius: 0px !important;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            pointer-events: none;
+        }
+
+        /* Original Status Dot Indicator - Scaled slightly for TV visibility */
+        .status-dot {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: none;
+            background-color: var(--status-green);
+            z-index: 6;
+            pointer-events: none;
+            transition: background-color 0.3s;
+        }
+
+        /* Specialized Audio UI Mode */
+        #audio-ui {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at center, #1a1a24 0%, #060608 100%);
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2;
+            border-radius: 0px;
+        }
+
+        .audio-disc {
+            width: 180px; /* Scaled up for TV display distances */
+            height: 180px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #22222a 35%, #111115 100%);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .audio-disc::after {
+            content: '';
+            width: 44px;
+            height: 44px;
+            background: var(--bg-color);
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .playing .audio-disc {
+            animation: spin 20s linear infinite;
+        }
+
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        .audio-track-title {
+            font-size: 20px; /* Increased font visibility scale */
+            font-weight: 600;
+            letter-spacing: -0.4px;
+            max-width: 80%;
+            text-align: center;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+        
+        .audio-subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        /* Floating Controls Dashboard Overlay - Larger padding tap targets for TV browsers */
+        #custom-controls {
+            position: absolute;
+            bottom: 24px;
+            left: 24px;
+            right: 24px;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            padding: 20px 24px;
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            z-index: 5;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+        }
+
+        #player-container:fullscreen #custom-controls {
+            bottom: 35px;
+            left: 35px;
+            right: 35px;
+            padding: 24px 30px;
+        }
+
+        .show-controls {
+            opacity: 1 !important;
+            transform: translateY(0) !important;
+            pointer-events: auto !important;
+        }
+
+        .hide-controls {
+            opacity: 0 !important;
+            transform: translateY(15px) !important;
+            pointer-events: none !important;
+        }
+
+        .progress-container {
+            width: 100%;
+            height: 6px; /* Thickened slightly for viewing distance visibility */
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            cursor: pointer;
+            position: relative;
+            transition: height 0.2s;
+        }
+        
+        .progress-container:hover {
+            height: 8px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: #ffffff;
+            border-radius: 3px;
+            transition: width 0.1s linear;
+        }
+
+        .control-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .btn-pair {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+
+        button {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 18px; /* Enhanced size scales for couch navigation clarity */
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s, transform 0.1s;
+        }
+
+        button:hover { color: var(--text-secondary); }
+        button:active { transform: scale(0.95); }
+
+        .time-display {
+            font-size: 14px;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .volume-container {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255,255,255,0.15);
+            height: 5px;
+            border-radius: 3px;
+            width: 90px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: white;
+            transition: transform 0.1s;
+        }
+
+        select {
+            background: rgba(255, 255, 255, 0.06);
+            color: white;
+            border: 1px solid var(--panel-border);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            outline: none;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        select:hover { background: rgba(255, 255, 255, 0.12); }
+        select option { background: #121218; color: white; }
+
+        /* Clean Dark Preset Command Control Panel Panel */
+        #presets-panel {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .presets-title {
+            font-size: 13px; /* Enhanced readability for text elements */
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .presets-grid {
+            display: flex;
+            gap: 16px;
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        /* Preset Card Main footprint */
+        .preset-card {
+            flex: 1;
+            min-width: 230px; /* Optimized sizing layout matrices for wide screen display rooms */
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            cursor: pointer;
+        }
+
+        /* Clear, Tint-Free Image Frame Container Box - Restored exact height: 65px */
+        .preset-image-box {
+            width: 100%;
+            height: 65px; 
+            background-color: rgba(255, 255, 255, 0.02);
+            background-size: cover;
+            background-position: center;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px; 
+            transition: all 0.2s ease;
+        }
+
+        .preset-card:hover .preset-image-box {
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        /* Under-Box Label Area */
+        .preset-text-box {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            padding: 0 4px;
+        }
+
+        .preset-name {
+            font-size: 15px; /* Boosted visibility metrics */
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .preset-type {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Hide auxiliary layouts cleanly during fullscreen modes */
+        #player-container:fullscreen ~ #presets-panel {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="stage-wrapper">
+        <div id="player-container">
+            <div class="status-dot" id="status-dot"></div>
+
+            <video id="video-element" preload="metadata" playsinline></video>
+
+            <div id="audio-ui">
+                <div class="audio-disc"></div>
+                <div class="audio-track-title" id="audio-title">Live Stream</div>
+                <div class="audio-subtitle">Audio Broadcast</div>
+            </div>
+
+            <div id="custom-controls" class="hide-controls interactive-ui">
+                <div class="progress-container" id="progress-container">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="btn-pair">
+                            <button id="play-btn" style="font-size: 16px;">▶</button>
+                            <button id="stop-btn" style="font-size: 13px;">⏹</button>
+                        </div>
+                        <div class="volume-container">
+                            <button id="mute-btn" style="font-size: 16px;">🔊</button>
+                            <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1">
+                        </div>
+                        <span class="time-display" id="time-display">0:00 / 0:00</span>
+                    </div>
+
+                    <div class="control-group">
+                        <select id="quality-selector">
+                            <option value="-1">Auto Adaptive</option>
+                        </select>
+                        <button id="fullscreen-btn" style="font-size: 16px;">⛶</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="presets-panel">
+            <div class="presets-title">Quick-Access Channel Presets</div>
+            <div class="presets-grid" id="presets-container-grid">
+                </div>
+        </div>
+
+    </div>
+
+    <script>
+        // =========================================================================
+        // 🌟 MASTER CHANNEL PRESET CONFIGURATIONS (EDIT 4 PRESETS HERE EASILY)
+        // =========================================================================
+        const PRESETS_CONFIG = [
+            {
+                name: "TLnovelas",
+                type: "",
+                url:"http://190.61.101.11:7050/play/a04h/index.m3u8?hls",
+                image: "https://images.seeklogo.com/logo-png/44/1/tlnovelas-logo-png_seeklogo-446460.png"
+            },
+            {
+                name: "Telemundo",
+                type: "",
+               url:"https://tv.vitaminagg.vip/proxy?url=http%3A%2F%2F24.152.53.3%3A8090%2Fplay%2Fa00z%2Findex.m3u8%3Fhls",
+                image: "https://i0.wp.com/nbcuniversalnewsgroup.com/telemundo/wp-content/uploads/sites/7/2024/03/telemundo.png?fit=1038%2C576&ssl=1"
+            },
+            {
+                name: "",
+                type: "",
+                url: "",
+                image: "" // Leave empty "" for pure clean dark backing card look
+            },
+            {
+                name: "",
+                type: "",
+                url: "",
+                image: ""
+            }
+
+        ];
+        // =========================================================================
+
+        const video = document.getElementById('video-element');
+        const playerContainer = document.getElementById('player-container');
+        const stageWrapper = document.getElementById('stage-wrapper');
+        const customControls = document.getElementById('custom-controls');
+        const playBtn = document.getElementById('play-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const muteBtn = document.getElementById('mute-btn');
+        const volumeSlider = document.getElementById('volume-slider');
+        const progressBar = document.getElementById('progress-bar');
+        const progressContainer = document.getElementById('progress-container');
+        const timeDisplay = document.getElementById('time-display');
+        const audioUI = document.getElementById('audio-ui');
+        const audioTitle = document.getElementById('audio-title');
+        const qualitySelector = document.getElementById('quality-selector');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const presetsContainerGrid = document.getElementById('presets-container-grid');
+        const statusDot = document.getElementById('status-dot');
+
+        let hlsInstance = null;
+        let healthCheckInterval = null;
+        let mouseTimer = null;
+        let isLiveStream = false;
+        let hasActiveMedia = false; 
+
+        // --- AUTOMATED PRESET DATA ARRAY MAPPER ---
+        function renderPresetDashboardMatrix() {
+            presetsContainerGrid.innerHTML = '';
+            PRESETS_CONFIG.forEach((config) => {
+                const card = document.createElement('div');
+                card.className = 'preset-card';
+                
+                const imageBox = document.createElement('div');
+                imageBox.className = 'preset-image-box';
+                if (config.image && config.image.trim() !== "") {
+                    imageBox.style.backgroundImage = `url('${config.image}')`;
+                }
+
+                card.appendChild(imageBox);
+                card.innerHTML += `
+                    <div class="preset-text-box">
+                        <div class="preset-name">${config.name}</div>
+                        <div class="preset-type">${config.type}</div>
+                    </div>
+                `;
+
+                card.addEventListener('click', () => {
+                    loadStreamFeed(config.url);
+                });
+
+                presetsContainerGrid.appendChild(card);
+            });
+        }
+        renderPresetDashboardMatrix();
+
+        function updateStatus(currentBufferLength) {
+            if (currentBufferLength < 2.5) {
+                statusDot.style.backgroundColor = 'var(--status-red)';
+            } else if (currentBufferLength < 5.0) {
+                statusDot.style.backgroundColor = 'var(--status-orange)';
+            } else {
+                statusDot.style.backgroundColor = 'var(--status-green)';
+            }
+        }
+
+        // --- Diagnostics & Telemetry Pipeline Loop ---
+        function startHealthEngine() {
+            if (healthCheckInterval) clearInterval(healthCheckInterval);
+            statusDot.style.display = 'block';
+
+            healthCheckInterval = setInterval(() => {
+                if (video.paused) return;
+
+                let currentBufferLength = 0;
+                const bufferedTimeRanges = video.buffered;
+                const currentTime = video.currentTime;
+                for (let i = 0; i < bufferedTimeRanges.length; i++) {
+                    if (currentTime >= bufferedTimeRanges.start(i) && currentTime <= bufferedTimeRanges.end(i)) {
+                        currentBufferLength = bufferedTimeRanges.end(i) - currentTime;
+                        break;
+                    }
+                }
+                updateStatus(currentBufferLength);
+            }, 1000);
+        }
+
+        video.addEventListener('playing', startHealthEngine);
+
+        // --- CORE UNTHROTTLED INTERNET-BASED STREAM LOADER ENGINE ---
+        function loadStreamFeed(url) {
+            const sanitizedUrl = url.trim();
+            if (!sanitizedUrl) return;
+
+            resetPlayerCore();
+
+            const isAudio = sanitizedUrl.toLowerCase().includes('.mp3') || sanitizedUrl.toLowerCase().includes('audio');
+            isLiveStream = sanitizedUrl.toLowerCase().includes('.m3u8');
+            hasActiveMedia = true; 
+
+            if (isAudio) {
+                audioUI.style.display = 'flex';
+                const parsedTitle = sanitizedUrl.substring(sanitizedUrl.lastIndexOf('/') + 1) || "Audio Broadcast";
+                audioTitle.textContent = decodeURIComponent(parsedTitle);
+                qualitySelector.disabled = true;
+                qualitySelector.style.opacity = '0.3';
+            } else {
+                audioUI.style.display = 'none';
+                qualitySelector.disabled = false;
+                qualitySelector.style.opacity = '1';
+            }
+
+            if (isLiveStream && Hls.isSupported()) {
+                hlsInstance = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: false,
+                    maxBufferLength: 20,              
+                    maxMaxBufferLength: 40,          
+                    maxBufferSize: 80 * 1024 * 1024, 
+                    abrEwmaDefaultEstimate: 15000000, 
+                    abrBandwidthFactor: 1.0,          
+                    abrBandwidthUpFactor: 1.0,        
+                    liveSyncDurationCount: 5.0,      
+                    liveMaxLatencyDurationCount: 8.0,
+                    maxStarvationDelay: 4.5,         
+                    nudgeMaxRetries: 5,
+                    nudgeDelay: 0.1,
+                    maxLoadingDelay: 4,
+                    minAutoBitrate: 600000,          
+                    manifestLoadingMaxRetry: 6,
+                    manifestLoadingRetryDelay: 300
+                });
+                
+                hlsInstance.loadSource(sanitizedUrl);
+                hlsInstance.attachMedia(video);
+
+                hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR: hlsInstance.startLoad(); break;
+                            case Hls.ErrorTypes.MEDIA_ERROR: hlsInstance.recoverMediaError(); break;
+                            default: resetPlayerCore(); break;
+                        }
+                    }
+                });
+
+                hlsInstance.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+                    qualitySelector.innerHTML = '<option value="-1">Auto Adaptive</option>';
+                    data.levels.sort((a, b) => b.bitrate - a.bitrate);
+
+                    data.levels.forEach((level, index) => {
+                        const height = level.height || 0;
+                        const bitRateRaw = level.bitrate;
+                        
+                        let definitionTag = 'SD';
+                        if (height >= 2160) definitionTag = '4K';
+                        else if (height >= 720) definitionTag = 'HD';
+                        
+                        let bitrateText = '';
+                        if (bitRateRaw >= 1000000) {
+                            bitrateText = `${(bitRateRaw / 1000000).toFixed(1)} Mbps`;
+                        } else {
+                            bitrateText = `${Math.round(bitRateRaw / 1000)} kbps`;
+                        }
+
+                        const option = document.createElement('option');
+                        option.value = index;
+                        option.textContent = `${height}p [${definitionTag}] (${bitrateText})`;
+                        qualitySelector.appendChild(option);
+                    });
+                });
+
+                hlsInstance.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+                    const currentLevelIndex = data.level;
+                    if (hlsInstance.levels[currentLevelIndex]) {
+                        const activeHeight = hlsInstance.levels[currentLevelIndex].height;
+                        const autoOption = qualitySelector.options[0];
+                        if (autoOption && qualitySelector.value === "-1") {
+                            autoOption.textContent = `Auto Adaptive (${activeHeight}p)`;
+                        }
+                    }
+                });
+
+            } else {
+                video.src = sanitizedUrl;
+                qualitySelector.innerHTML = '<option value="auto">Direct Asset Stream</option>';
+            }
+
+            video.playbackRate = 1.0;
+            video.play()
+                .then(() => { playBtn.textContent = '⏸'; })
+                .catch(() => { playBtn.textContent = '▶'; });
+            
+            revealControls();
+        }
+
+        // Precision 60fps forward stash frame timing alignment loop
+        video.addEventListener('timeupdate', () => {
+            if (!video.paused && isLiveStream && hlsInstance) {
+                const bufferInfo = video.buffered;
+                if (bufferInfo.length) {
+                    const currentPos = video.currentTime;
+                    for (let i = 0; i < bufferInfo.length; i++) {
+                        if (currentPos >= bufferInfo.start(i) && currentPos >= bufferInfo.end(i) - 0.12) {
+                            if (hlsInstance.liveSyncPosition && hlsInstance.liveSyncPosition > currentPos + 0.6) {
+                                video.currentTime = hlsInstance.liveSyncPosition - 1.0;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // --- HOVER CONTROL CONSOLE TIMER LOOPS ---
+        function removeControls() {
+            customControls.classList.remove('show-controls');
+            customControls.classList.add('hide-controls');
+            if (hasActiveMedia) {
+                playerContainer.style.cursor = 'none';
+            }
+        }
+
+        function revealControls() {
+            playerContainer.style.cursor = 'default';
+            if (!hasActiveMedia) return; 
+            
+            customControls.classList.remove('hide-controls');
+            customControls.classList.add('show-controls');
+            
+            clearTimeout(mouseTimer);
+            mouseTimer = setTimeout(removeControls, 5000); 
+        }
+
+        playerContainer.addEventListener('mousemove', revealControls);
+        playerContainer.addEventListener('mouseenter', revealControls);
+        
+        playerContainer.addEventListener('mouseleave', () => {
+            if (!hasActiveMedia) return;
+            clearTimeout(mouseTimer);
+            mouseTimer = setTimeout(removeControls, 5000); 
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                clearTimeout(mouseTimer);
+                revealControls();
+            }
+        });
+
+        function resetPlayerCore() {
+            hasActiveMedia = false; 
+            if (hlsInstance) {
+                hlsInstance.destroy();
+                hlsInstance = null;
+            }
+            if (healthCheckInterval) clearInterval(healthCheckInterval);
+            
+            video.removeAttribute('src');
+            video.load();
+            statusDot.style.display = 'none';
+            
+            progressBar.style.width = '0%';
+            timeDisplay.textContent = '0:00 / 0:00';
+            playBtn.textContent = '▶';
+            audioUI.classList.remove('playing');
+            isLiveStream = false;
+            
+            qualitySelector.innerHTML = '<option value="-1">Auto Adaptive</option>';
+            
+            removeControls();
+            playerContainer.style.cursor = 'default';
+        }
+
+        playBtn.addEventListener('click', () => {
+            if (!video.src && (!hlsInstance || !hlsInstance.url)) return;
+            if (video.paused) {
+                video.play();
+                playBtn.textContent = '⏸';
+            } else {
+                video.pause();
+                playBtn.textContent = '▶';
+            }
+        });
+
+        stopBtn.addEventListener('click', resetPlayerCore);
+        video.addEventListener('play', () => audioUI.classList.add('playing'));
+        video.addEventListener('pause', () => audioUI.classList.remove('playing'));
+
+        video.addEventListener('timeupdate', () => {
+            const percent = (video.currentTime / video.duration) * 100;
+            progressBar.style.width = `${percent || 0}%`;
+            timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration || 0)}`;
+        });
+
+        progressContainer.addEventListener('click', (e) => {
+            if (!video.duration || isLiveStream) return;
+            const rect = progressContainer.getBoundingClientRect();
+            const pos = (e.clientX - rect.left) / rect.width;
+            video.currentTime = pos * video.duration;
+        });
+
+        volumeSlider.addEventListener('input', (e) => {
+            video.volume = e.target.value;
+            muteBtn.textContent = video.volume === 0 ? '🔇' : '🔊';
+        });
+
+        muteBtn.addEventListener('click', () => {
+            video.muted = !video.muted;
+            muteBtn.textContent = video.muted ? '🔇' : '🔊';
+        });
+
+        qualitySelector.addEventListener('change', (e) => {
+            if (hlsInstance) {
+                const targetLevel = parseInt(e.target.value);
+                if (targetLevel === -1) {
+                    hlsInstance.currentLevel = -1;
+                    hlsInstance.loadLevel = -1; 
+                } else {
+                    hlsInstance.currentLevel = targetLevel; 
+                    hlsInstance.loadLevel = targetLevel;
+                }
+            }
+        });
+
+        fullscreenBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                playerContainer.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        function formatTime(seconds) {
+            if (isNaN(seconds) || !isFinite(seconds) || isLiveStream) return "Live";
+            const min = Math.floor(seconds / 60);
+            const sec = Math.floor(seconds % 60);
+            return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+        }
+    </script>
+</body>
+</html>
